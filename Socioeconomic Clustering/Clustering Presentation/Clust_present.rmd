@@ -1,0 +1,503 @@
+---
+title: "A Comparison of 1918 Flu and COVID-19 Pandemics in Missouri Counties"
+subtitle: "Stat 9530 Final Project"
+author: "Aaron Bogan"
+output:
+  bookdown::pdf_document2:
+    toc: false
+bibliography: refs.bib ## Reference file in the same directory
+#nocite: '@*' ## include ALL references in refs.bib (use nocite: | @ref1, @ref2 to include particular references not cited in the document)
+csl: jasa.csl ## this file (similar to the .bib) has the jasa format instructions
+# header-includes:
+#     - \usepackage[labelformat=empty]{caption} #this gets rid of figure number labels if ya don't want them
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,message=FALSE,warning=FALSE)
+library(tidyverse) 
+library(gridExtra)
+library(ClustGeo) # cluster analysis
+library(spdep) # adjacency matrix
+library(randomForest) # random forest for importance plots
+```
+
+```{r, Data Import and Manipulations}
+## Data import and manipulations: These .rdata files are created from the PI provided Excel files using "Data_import.r"
+load("C:/Users/Arrun/Desktop/One Drive/OneDrive - University of Missouri/Learnin/Data Mining and ML 9530/Final Project/COVID_data.rdata")
+load("C:/Users/Arrun/Desktop/One Drive/OneDrive - University of Missouri/Learnin/Data Mining and ML 9530/Final Project/FLU_data.rdata")
+## SCALING ##
+X20 <- COVID.data[,6:12] # select & scale 2020 predictor variables
+X20.scale <- scale(X20)
+X19 <- FLU.data[,6:11] # select & scale 1910 predictor variables
+X19.scale <- scale(X19)
+
+###### Proximity Measures for Geography and Socioeconomic Variables #######
+# Get the distance matrix for geography based on county centroids (D1)
+Mo.shape.new <- as(Mo.shape, "Spatial") # to convert to SpatialPolygonsDataFrame
+centroids.mat <- as.matrix(centroids@coords) # grab the centroid coordinates (which are lat and long)
+dist1 <- raster::pointDistance(centroids.mat, centroids.mat, lonlat = TRUE, allpairs = TRUE)
+D1 <- dist(dist1) # distance based on centroid lat/lon
+
+# Predictor norms / "distances" based on 2010 census socioeconomic variables
+D020 <- dist(X20.scale)
+# Predictor norms / "distances" based on 1910 census socioeconomic variables
+D019 <- dist(X19.scale)
+
+## 4 clusters ####
+K <- 4 
+range.alpha <- seq(0,1,0.05)
+##   COVID ##
+## contiguity weights ("alpha")
+cr204 <- choicealpha(D020,D1,range.alpha,K,graph=F) # k=4, optimum 0.22 alpha
+## Wald cluster determination
+tree204.alpha <- hclustgeo(D020,D1,alpha = .22) 
+part204.alpha <- cutree(tree204.alpha, k = K) 
+
+##   FLU ##
+## contiguity weights ("alpha")
+cr194 <- choicealpha(D019,D1,range.alpha,K,graph=F) # k=4, optimum 0.15 alpha
+## Wald cluster determination
+tree194.alpha <- hclustgeo(D019,D1,alpha = .15) 
+part194.alpha <- cutree(tree194.alpha, k = K) 
+
+
+### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### 
+## time series visualization based on the 4 predictor defined clusters ####
+### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### 
+##COVID confirmed deaths cumulative TS ####
+death.cum <- select(COVID.death.cum_TS, !(Date))
+##add population data and cluster designations
+death.TS <- data.frame(cluster = part204.alpha,
+                      population = COVID.data$TotalPop,
+                      deaths = t(death.cum))
+## cumulative time series for each cluster group (sum each county cumulative counts in a cluster)
+cov.ts <- rowsum(death.TS[,3:ncol(death.TS)], group = death.TS$cluster)
+rownames(cov.ts) <- list("C1", "C2", "C3", "C4")
+cov.ts <- as.data.frame(t(cov.ts)) 
+cov.ts$date <- seq(from = as.Date("2020-01-01"),
+                   to = as.Date("2020-01-01")+nrow(cov.ts)-1, by = 1)
+## population and death totals for scaling
+pop1 = as.numeric(sum(death.TS$population[death.TS$cluster==1]))
+pop2 = as.numeric(sum(death.TS$population[death.TS$cluster==2]))
+pop3 = as.numeric(sum(death.TS$population[death.TS$cluster==3]))
+pop4 = as.numeric(sum(death.TS$population[death.TS$cluster==4]))
+p.tot = as.numeric(sum(death.TS$population))
+## per 100,000 standardize
+k100.1 = (100000/pop1)
+k100.2 = (100000/pop2)
+k100.3 = (100000/pop3)
+k100.4 = (100000/pop4)
+cov.ts$C1.100k <- cov.ts$C1*k100.1
+cov.ts$C2.100k <- cov.ts$C2*k100.2
+cov.ts$C3.100k <- cov.ts$C3*k100.3
+cov.ts$C4.100k <- cov.ts$C4*k100.4
+
+
+##FLU confirmed deaths cumulative TS ####
+death.cum <- select(FLU.death.cum_TS, !(Date))
+##add population data and cluster designations
+death.TS <- data.frame(cluster = part194.alpha,
+                      population = FLU.data$TotalPop,
+                      deaths = t(death.cum))
+## cumulative time series for each cluster group (sum each county cumulative counts in a cluster)
+flu.ts <- rowsum(death.TS[,3:ncol(death.TS)], group = death.TS$cluster)
+rownames(flu.ts) <- list("C1", "C2", "C3", "C4")
+flu.ts <- as.data.frame(t(flu.ts)) 
+flu.ts$date <- seq(from = as.Date("1918-01-01"),
+                   to = as.Date("1920-12-31"), by = 1)
+## population and death totals for scaling
+pop1 = as.numeric(sum(death.TS$population[death.TS$cluster==1]))
+pop2 = as.numeric(sum(death.TS$population[death.TS$cluster==2]))
+pop3 = as.numeric(sum(death.TS$population[death.TS$cluster==3]))
+pop4 = as.numeric(sum(death.TS$population[death.TS$cluster==4]))
+p.tot = as.numeric(sum(death.TS$population))
+## per 100,000 standardize
+k100.1 = (100000/pop1)
+k100.2 = (100000/pop2)
+k100.3 = (100000/pop3)
+k100.4 = (100000/pop4)
+flu.ts$C1.100k <- flu.ts$C1*k100.1
+flu.ts$C2.100k <- flu.ts$C2*k100.2
+flu.ts$C3.100k <- flu.ts$C3*k100.3
+flu.ts$C4.100k <- flu.ts$C4*k100.4
+```
+
+# Introduction
+
+It is not hyperbole to say the entire planet has been impacted by the SARS-CoV-2 virus (COVID-19). In early 2020, the virus went from a relatively obscure reference in a news article to a household name in a few short weeks. The human toll of this pandemic will take years to fully realize. In an effort to begin to better understand novel coronavirus, epidemiologists, historians, and anthropologists are investigating the Flu Pandemic of 1918 for similarities. Often referred to as the "Spanish Flu" due to unsubstantiated assumptions concerning the pandemic's origins [@Trilla2008], here it will be referred to as the 1918 Flu Pandemic. The 1918 Flu is estimated to have infected 500 million people (roughly one-third of the global population in the early 20th century), with a death toll of roughly 50 million [@CDCFlu]. As of this writing, the SARS-CoV-2 virus has infected an estimated 495 million people resulting in 6.1 million deaths worldwide [@Hopkins2022].
+
+This project seeks to aid in pandemic comparison at the county level in Missouri. Using county-level COVID death counts from various sources compiled by the state of Missouri, and death certificate data from 1918 to 1920, the mortality time series for both pandemics can be observed and compared (see figure \@ref(fig:RawCumPlt)). Additionally, socioeconomic variables for each county sourced from the 1910 and 2010 census are utilized for comparison. Since county-level divisions are a somewhat arbitrary means of spatial aggregation, more meaningful spatial divisions may assist in pandemic comparisons. Specifically, it was of interest to investigate if counties could be clustered based not only on regional proximity, but also along socioeconomic similarities. Such clustering not only reduces the space dimension of the investigation (providing some simplification) but also has the potential benefit of offering a glimpse into disease progression across time for differing socioeconomic groups. Differences in disease progression observed across the varying regional/socioeconomic clusters provide a window into the pandemics that may help hypothesize potentially important related factors. These insights can be further aided by analyzing the relative importance of the factors in determining county cluster membership.
+
+# Methods
+
+## Clustering
+
+Ward clustering was performed on county-level socioeconomic variables obtained from the 2010 and 1910 decennial census using the ClustGeo [@ClustGeo] package in R. It was desired to select similar socioeconomic variables for each time period to provide more meaningful comparisons. The 1910 variables include the literacy rate for all voting age males, the average value (in dollars) of all property per farm, proportion of males, number of physicians per 100,000 people, the ratio of 20 to 44 year-olds to those older than 65, and proportion white. The same variables were used for the 2010 analysis plus the proportion of Hispanics. Additionally, the "literacy rate" for 2010 is the proportion of persons age 25 or higher with at least a high school diploma. Using a Ward dendrogram of all possible cluster divisions based on socioeconomic features as well as input from project collaborators, a four-cluster scheme was selected for both time periods. The four clusters of counties based solely on the feature space fails to account for regional/spatial similarities associated with county proximity (see figure \@ref(fig:FeatureClusters)). To account for spatial similarities, county centroids were used to introduce a contiguity constraint. The constraint provides a means of selecting the amount of influence physical proximity has on the socioeconomic homogeneity of each cluster.
+
+Selecting a reasonable weighting ("alpha") of the physical space dimension relative to the feature space can be accomplished by choosing a value that minimizes the reduction in feature similarity while maximizing the influence of spatial proximity. This concept is demonstrated visually in figure \@ref(fig:AlphaPlt). For the 1910 socioeconomic setting, an alpha value of 0.15 was selected. For the 2010 socioeconomic clustering, alpha was 0.22.
+
+Applying the addiitonal proximity constraint, a much more spatially contiguous grouping of counties is achieved. Based on recommendations from anthropology experts on the research team, the four 1910 clusters were identified as "North," "Central," "Southwest," and "Southeast." The 2010 contiguity constrained clusters were identified as "North," "South," "Urban," and "Bootheel." (figure \@ref(fig:contigclust))
+
+## Variable/Feature Importance
+
+To better understand the influence of particular socioeconomic variables, a random forest algorithm [@rforest] was used on the clustered counties to evaluate relative importance. For the 1910 clusters, average farm value, proportion white, and literacy were highly influential predictors of county cluster assignment. For 2010, the same three variables were estimated to be the most important, but proportion Hispanic and the age ratio variable also had a reasonable amount of influence (see figure \@ref(fig:rforestplt)).
+
+## Mortality Measures
+
+For the 1918 Flu Pandemic, researchers examined Missouri death certificates dated between January 1918 and December 1920. Daily death counts attributed to the pandemic were sorted by county. These counts were standardized for county population, and the cumulative daily deaths per 100,000 people was used as a measure of mortality.
+
+For COVID, the state of Missouri compiled daily counts of deaths attributed to the SARS-CoV-2 virus from various sources across the state. Death data from January 1st, 2020 to December 9th, 2021 was used for this analysis. Similar to the 1918 Flu data, cumulative daily counts were sorted by county and standardized for population. Figure \@ref(fig:RawCumPlt) provides an illustration of the cumulative time series for both pandemics.
+
+# Findings
+
+Time series visualizations of both pandemics' mortality were created to evaluate potential trends/similarities/differences between the socioeconomic clusters.
+
+## The 1918 Flu Pandemic
+
+Cumulative death counts / 100,000 for the central and southeast clustered counties suggest a similar time series progression. The north and southwest clusters also have similar trajectories. The central/southeast appears to have suffered increased mortality from roughly November 1918 to April 1919 when compared to the north/southwest clusters. This suggests a more severe flu season in these counties when compared to those socioeconomically grouped in the north/southwest clusters. 
+
+```{r, fig.height=5}
+p1 <- ggplot(flu.ts,aes(x=date))+
+  geom_line(aes(y=C1.100k, col = "North"))+
+  geom_line(aes(y=C2.100k, col = "Central"))+
+  geom_line(aes(y=C3.100k, col = "Southwest"))+
+  geom_line(aes(y=C4.100k, col = "Southeast"))+
+  ylab("Cumulative Deaths / 100k") +
+  scale_x_date(breaks = "4 months", date_labels = "%b %y") +
+  scale_colour_manual("", 
+                      breaks = c("North", "Central", "Southwest", "Southeast"),
+                      values = c("North"="#000000", "Central"="#E69F00", 
+                                 "Southwest"="#56B4E9", "Southeast"="#009E73")) +
+  labs(title = "1918 Flu Cumulative Deaths 1918 to 1921",
+       subtitle = "by socioeconomic cluster")
+
+Mo.shape.combined <- Mo.shape %>% mutate(Cluster = recode(part194.alpha, "1" = "North",
+                                                          "2" = "Central",
+                                                          "3" = "Southwest",
+                                                          "4" = "Southeast"))
+p2 <- ggplot(data = Mo.shape.combined) +
+  geom_sf(aes(fill = Cluster)) +
+  scale_fill_manual(values = c("North"="#000000", "Central"="#E69F00", 
+                               "Southwest"="#56B4E9", "Southeast"="#009E73")) +
+  labs(title = "1918 Flu Socioeconomic County Clusters") +
+  theme(legend.title= element_blank(),
+        axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank())
+
+grid.arrange(p2,p1,nrow=2)
+```
+
+```{r T-tests on 1910 socioeconomic variables, include=F}
+Flu.preds <- FLU.data %>% 
+  select(!(Density)) %>%
+  mutate(Cluster = as.factor(recode(part204.alpha, "1" = "North.SW",
+                                    "2" = "Central.SE",
+                                    "3" = "North.SW",
+                                    "4" = "Central.SE"))) %>%
+  group_by(Cluster)
+
+t.test(filter(Flu.preds, Cluster == "North.SW")$Literacy, filter(Flu.preds, Cluster == "Central.SE")$Literacy)
+t.test(filter(Flu.preds, Cluster == "North.SW")$Avg.Farm.Val, filter(Flu.preds, Cluster == "Central.SE")$Avg.Farm.Val)
+t.test(filter(Flu.preds, Cluster == "North.SW")$Prop.White, filter(Flu.preds, Cluster == "Central.SE")$Prop.White)
+```
+
+
+A comparison of these combined clusters' important socioeconomic features (average farm value, proportion white, and literacy) shows statistically significant differences in mean literacy and percent white. Simple, one-sided T-tests show the central/southeast clustered counties have significantly lower mean literacy rates and proportion of whites (pvalues $\approx 0$ for both). Average farm values for these combined regions are not significantly different at the .05 level (pvalue = 0.06). Figure \@ref(fig:flupreds) shows boxplot comparisons of these variables.
+
+## COVID
+
+A similar analysis of the COVID time series shows visibly increased mortality in the "Bootheel" region (southeast corner of the state) between August 2020 and roughly March 2021. Additionally, urban counties have visually higher mortality from the pandemic's start in March of 2020 to approximately November of the same year. At that point, the north, south, and urban clusters demonstrate fairly similar cumulative patterns over time. This suggests an earlier initial surge in mortality for urban counties, but an overall similar pandemic experience for all of the non-Bootheel counties. 
+
+```{r, fig.height=5}
+## Cumulative Deaths /100,000 plot
+## /100,000 plot by socio cluster (titled as requested)
+p1 <- ggplot(cov.ts,aes(x=date))+
+  geom_line(aes(y=C1.100k, col = "North"))+
+  geom_line(aes(y=C2.100k, col = "South"))+
+  geom_line(aes(y=C3.100k, col = "Urban"))+
+  geom_line(aes(y=C4.100k, col = "Bootheel"))+
+  ylab("Cumulative Deaths / 100,000") +
+  scale_x_date(breaks = "3 months", date_labels = "%b %y") +
+  scale_colour_manual("", 
+                      breaks = c("North", "South", "Urban", "Bootheel"),
+                      values = c("North"="#000000", "South"="#E69F00", 
+                                 "Urban"="#56B4E9", "Bootheel"="#009E73")) +
+  labs(title = "COVID Cumulative Deaths 2020 to 2022",
+       subtitle = "by socioeconomic cluster")
+
+## combine cluster data to Mo.shape file
+Mo.shape.combined <- Mo.shape %>% mutate(Cluster = recode(part204.alpha, "1" = "North",
+                                                          "2" = "South",
+                                                          "3" = "Urban",
+                                                          "4" = "Bootheel"))
+p3 <- ggplot(data = Mo.shape.combined) +
+  geom_sf(aes(fill = Cluster)) +
+  scale_fill_manual(values = c("North"="#000000", "South"="#E69F00", 
+                               "Urban"="#56B4E9", "Bootheel"="#009E73")) +
+  labs(title = "COVID Socioeconomic County Clusters") +
+  theme(legend.title= element_blank(),
+        axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank())
+
+grid.arrange(p3,p1,nrow=2)
+
+```
+
+As with the 1918 Flu, mean comparisons were conducted using simple, one-sided T-tests on the combined clusters of Missouri counties. Based on visually similar cumulative pandemic time series, the north, south, and urban clusters were combined and compared to the far southeast counties in the Bootheel cluster. 
+
+```{r T-tests on 2010 socioeconomic variables, include=F}
+COVID.preds <- COVID.data %>% 
+  select(!(Density)) %>%
+  mutate(Cluster = as.factor(recode(part204.alpha, "1" = "Urb/North/South",
+                                    "2" = "Urb/North/South",
+                                    "3" = "Urb/North/South",
+                                    "4" = "Bootheel"))) %>%
+  group_by(Cluster)
+
+t.test(filter(COVID.preds, Cluster == "Urb/North/South")$Avg.Farm.Val, filter(COVID.preds, Cluster == "Bootheel")$Avg.Farm.Val)
+t.test(filter(COVID.preds, Cluster == "Urb/North/South")$Prop.White, filter(COVID.preds, Cluster == "Bootheel")$Prop.White)
+t.test(filter(COVID.preds, Cluster == "Urb/North/South")$Literacy, filter(COVID.preds, Cluster == "Bootheel")$Literacy)
+t.test(filter(COVID.preds, Cluster == "Urb/North/South")$Prop.Hisp, filter(COVID.preds, Cluster == "Bootheel")$Prop.Hisp)
+t.test(filter(COVID.preds, Cluster == "Urb/North/South")$YO.Ratio, filter(COVID.preds, Cluster == "Bootheel")$YO.Ratio)
+```
+
+The Bootheel-clustered counties have significantly lower literacy levels (pvalue $\approx 0$) and percent white (pvalue = 0.01) than the rest of the state. The average farm value for Bootheel counties is significantly higher (pvalue = 0.001). Proportion of Hispanics and age ratios are not significantly different. It should be noted that the Bootheel cluster includes only a small number of counties (4 out of 115 total Missouri counties) which lends less credibility to these mean comparisons due to possible undetected issues with distributional assumptions required for the statistical tests. However, as the small sample does not appear to be heavily skewed (see figure \@ref(fig:covpreds)), there is still reasonable evidence to support the objective validity of these conclusions.
+
+# Discussion
+
+For both pandemics, the southeast region of Missouri seems to have been more negatively impacted than the rest of the state. In the 1918 pandemic, this includes a relatively large number of counties in this spatial region. For COVID, only four "Bootheel" counties in the extreme southeast corner of the state are included. Based on county-level data from both the 1910 and 2010 census, these clustered counties have statistically significantly lower literacy rates as well as percent whites for both pandemics. These results are interesting in that while separated by a century, counties that seem to have experienced higher mortality for both 1918 Flu and COVID demonstrate similar regional/socioeconomic differences.
+
+## Recommendations
+
+Additional clustering schemes should be attempted in order to lend support to the somewhat arbitrary choice of four clusters. K-means, principle components, or perhaps the multiple Bayesian elastic net (MBEN) which uses a Dirichlet process to determine the number of clusters based on prior distributional assumptions and the data may be useful here [@yang2010].
+
+In an attempt to cluster counties based on the response data (cumulative deaths per 100,000), the method employed in this project did not produce useful results. Counties seemed to cluster somewhat randomly based on their overall pandemic mortality. However, other methods may well be able to detect relationships among the counties based on their individual pandemic time series (see @Schwein2017 for an example of detecting relationships within high-dimensional spatio-temporally correlated data).
+
+More sophisticated means of comparing cluster time series would lend additional support to the combined cluster comparisons. Similarly, more complex modeling is necessary to better deal with the space-time correlations inherent in these data [@wikle2019].
+
+It is beyond the scope of this particular project to make conjecture(s) concerning possible causal relationship(s) between the pandemics and socioeconomic differences. An obvious next step would be to consult with subject matter experts concerning broader interpretation of the results.
+
+# Conclusion
+
+Researchers are interested in comparing the 1918 Flu and COVID pandemics to provide a better understanding of disease spread. Identifying important factors that influence transmission is key to reducing the cost of future pandemics. Using socioeconomic variables common to both time periods and readily available from the decennial census (1910 and 2010), Missouri counties were grouped together using a Ward clustering algorithm with a weighted contiguity constraint. A four-cluster grouping of counties for both eras was selected based on Ward dendrograms and subject matter expert input. Visual time series analysis of mortality demonstrated noticeable differences between pandemic progression for some of the clusters. More specifically, southeasetern Missouri counties tended to be more negatively impacted by both pandemics. Utilizing basic T-tests, these counties were shown to have lower mean literacy rates and percentage of whites for both time periods. More sophisticated means of modeling the space-time dependencies in the mortality data are necessary to reveal additional, useful relationships as well as potentially important disease transmission factors.
+
+\newpage
+
+# Figures
+
+```{r RawCumPlt, fig.height = 6, fig.cap="Statewide 1918 Flu and COVID Deaths.", echo=FALSE}
+p1 <- ggplot(cov.ts,aes(x=date))+
+  geom_line(aes(y=(C1+C2+C3+C4))) +
+  labs(y="Cumulative Deaths", title = "Missouri Cumulative COVID Deaths Jan 2020 to Dec 2021") +
+  scale_x_date(breaks = "3 months", date_labels = "%b %y") 
+p2 <- ggplot(flu.ts,aes(x=date))+
+  geom_line(aes(y=(C1+C2+C3+C4))) +
+  labs(y="Cumulative Deaths", title = "Missouri Cumulative 1918 Flu Deaths Jan 1918 to Dec 1920") +
+  scale_x_date(breaks = "4 months", date_labels = "%b %y") 
+
+grid.arrange(p2,p1, ncol = 1)
+```
+
+```{r FeatureClusters, fig.height = 8, fig.cap="County clusters based on socioeconomic similarity alone (no contiguity constraint)"}
+## combine cluster data to Mo.shape file
+K <- 4
+COV.tree <- hclustgeo(D020) 
+part <- as.factor(cutree(COV.tree, k = K) )
+Mo.shape.combined <- Mo.shape %>% mutate(Cluster = part)
+p1 <- ggplot(data = Mo.shape.combined) +
+  geom_sf(aes(fill = Cluster), show.legend = FALSE) +
+  labs(title = "COVID Socioeconomic Clusters") +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank()) +
+  scale_fill_manual(values = c("#000000", "#E69F00", 
+                               "#56B4E9", "#009E73"))
+
+FLU.tree <- hclustgeo(D019) 
+part <- as.factor(cutree(FLU.tree, k = K) )
+Mo.shape.combined <- Mo.shape %>% mutate(Cluster = part)
+p2 <- ggplot(data = Mo.shape.combined) +
+  geom_sf(aes(fill = Cluster), show.legend = FALSE) +
+  labs(title = "1918 FLU Socioeconomic Clusters") +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank()) +
+  scale_fill_manual(values = c("#000000", "#E69F00", 
+                               "#56B4E9", "#009E73"))
+grid.arrange(p2,p1,nrow=2)
+```
+
+```{r AlphaPlt, fig.height = 8, fig.cap="County similarity based on physical proximity (in red) and socioeconomic variables (in black) for various alpha weights"}
+alp_plot2010 <- data.frame(row.names = NULL, 
+                          Similarity.Proportion = cr204$Qnorm[,1],
+                          Proximity = cr204$Qnorm[,2],
+                          alpha = range.alpha)
+alp_plot1910 <- data.frame(row.names = NULL, 
+                          Similarity.Proportion = cr194$Qnorm[,1],
+                          Proximity = cr194$Qnorm[,2],
+                          alpha = range.alpha)
+
+p1 <- ggplot(alp_plot2010) +
+  geom_point(aes(y=Similarity.Proportion,x=alpha)) +
+  geom_line(aes(y=Similarity.Proportion,x=alpha)) +
+  geom_point(aes(y=Proximity,x=alpha), color = "red") +
+  geom_line(aes(y=Proximity,x=alpha), color = "red") +
+  labs(title = "Physical Proximity (red) and 2010 Socioeconomic Similarity (black)", ylab = "Similarity Proportion")
+p2 <- ggplot(alp_plot1910) +
+  geom_point(aes(y=Similarity.Proportion,x=alpha)) +
+  geom_line(aes(y=Similarity.Proportion,x=alpha)) +
+  geom_point(aes(y=Proximity,x=alpha), color = "red") +
+  geom_line(aes(y=Proximity,x=alpha), color = "red") +
+  labs(title = "Physical Proximity (red) and 1910 Socioeconomic Similarity (black)", ylab = "Similarity Proportion")
+grid.arrange(p2,p1,nrow=2)
+```
+
+```{r contigclust, fig.height = 8, fig.cap="Contiguity constrained county clusters based on socioeconomic similarity"}
+## combine 1910 cluster data to Mo.shape file
+Mo.shape.combined1910 <- Mo.shape %>% mutate(Cluster = recode(part194.alpha, "1" = "North",
+                                                          "2" = "Central",
+                                                          "3" = "Southwest",
+                                                          "4" = "Southeast"))
+## Plot contiguity constrained clusters
+p1 <- ggplot(data = Mo.shape.combined1910) +
+  geom_sf(aes(fill = Cluster)) +
+  scale_fill_manual(values = c("North"="#000000", "Central"="#E69F00", 
+                               "Southwest"="#56B4E9", "Southeast"="#009E73")) +
+  labs(title = "1918 Flu Socioeconomic County Clusters") +
+  theme(legend.title= element_blank(),
+        axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank())
+## combine 2010 cluster data to Mo.shape file
+Mo.shape.combined2010 <- Mo.shape %>% mutate(Cluster = recode(part204.alpha, "1" = "North",
+                                                          "2" = "South",
+                                                          "3" = "Urban",
+                                                          "4" = "Bootheel"))
+## Plot contiguity constrained 2010 clusters
+p2 <- ggplot(data = Mo.shape.combined2010) +
+  geom_sf(aes(fill = Cluster)) +
+  scale_fill_manual(values = c("North"="#000000", "South"="#E69F00", 
+                               "Urban"="#56B4E9", "Bootheel"="#009E73")) +
+  labs(title = "COVID Socioeconomic County Clusters") +
+  theme(legend.title= element_blank(),
+        axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank())
+grid.arrange(p1,p2,nrow=2)
+```
+
+
+```{r, include=F}
+# Random forest variable importance plots for the 1910 4 cluster socioeconomic categories:
+newdata <- data.frame(X19.scale, part194.alpha)
+rf19 <- randomForest(x = X19.scale, y = as.factor(part194.alpha), data = newdata, importance = TRUE, mtry = 4, ntree = 1000)
+vimp.plot1910 <- varImpPlot(rf19, main = "1910 Variable Importance Plots")
+# Random forest variable importance plots for the 2010 4 cluster socioeconomic categories:
+newdata <- data.frame(X20.scale, part204.alpha)
+rf20 <- randomForest(x = X20.scale, y = as.factor(part204.alpha), data = newdata, importance = TRUE, mtry = 4, ntree = 1000)
+vimp.plot2010 <- varImpPlot(rf20, main = "2010 Variable Importance Plots")
+```
+
+
+```{r rforestplt, fig.height=8, fig.cap="Variable importance based on mean accuracy decrease for 1910 and 2010 socioeconomic clusters"}
+## data manipulation and plots
+varplot1910 <- data.frame(row.names = NULL,
+                          Feature = rownames(vimp.plot1910),
+                          Importance = vimp.plot1910[,1]) %>%
+  arrange(desc(Importance)) %>%
+  mutate(Feature = factor(Feature,levels = Feature))
+p1 <- ggplot(varplot1910) +
+  geom_col(aes(x=Feature,y=Importance), color = "#000000") +
+  labs(title = "1910 Socioeconomic Variable Importance")
+## data manipulation and plots
+varplot2010 <- data.frame(row.names = NULL,
+                          Feature = rownames(vimp.plot2010),
+                          Importance = vimp.plot2010[,1]) %>%
+  arrange(desc(Importance)) %>%
+  mutate(Feature = factor(Feature,levels = Feature))
+p2 <- ggplot(varplot2010) +
+  geom_col(aes(x=Feature,y=Importance), color = "#000000") +
+  labs(title = "2010 Socioeconomic Variable Importance")
+grid.arrange(p1,p2,nrow=2)
+```
+
+```{r flupreds, fig.cap="1910 Socioeconomic variable comparisons by mortality similarity combined clusters"}
+Flu.preds <- FLU.data %>% 
+  select(!(Density)) %>%
+  mutate(Cluster = as.factor(recode(part194.alpha, "1" = "North.SW",
+                                    "2" = "Central.SE",
+                                    "3" = "North.SW",
+                                    "4" = "Central.SE"))) %>%
+  group_by(Cluster)
+  
+p1 <- ggplot(Flu.preds) +
+  geom_boxplot(aes(x=Cluster,y=Avg.Farm.Val)) +
+  labs(title = "Avg Farm Value", y="",x="")
+
+p2 <- ggplot(Flu.preds) +
+  geom_boxplot(aes(x=Cluster,y=Prop.White)) +
+  labs(title = "Pct White", y="")  
+
+p3 <- ggplot(Flu.preds) +
+  geom_boxplot(aes(x=Cluster,y=Literacy)) +
+  labs(title = "Literacy", y="")
+  
+grid.arrange(p1,p2,p3, ncol=3)
+```
+
+```{r covpreds, fig.height=8, fig.cap="2010 Socioeconomic variable comparisons by mortality similarity combined clusters"}
+COVID.preds <- COVID.data %>% 
+  select(!(Density)) %>%
+  mutate(Cluster = as.factor(recode(part204.alpha, "1" = "Urb/N/S",
+                                    "2" = "Urb/N/S",
+                                    "3" = "Urb/N/S",
+                                    "4" = "Bootheel"))) %>%
+  group_by(Cluster)
+## boxplots
+p1 <- ggplot(COVID.preds) +
+  geom_boxplot(aes(x=Cluster,y=Avg.Farm.Val)) +
+  labs(title = "Avg Farm Value", y="",x="")
+
+p2 <- ggplot(COVID.preds) +
+  geom_boxplot(aes(x=Cluster,y=Prop.White)) +
+  labs(title = "Pct White", y="",x="")  
+
+p3 <- ggplot(COVID.preds) +
+  geom_boxplot(aes(x=Cluster,y=Literacy)) +
+  labs(title = "Literacy", y="",x="")
+
+p4 <- ggplot(COVID.preds) +
+  geom_boxplot(aes(x=Cluster,y=Prop.Hisp)) +
+  labs(title = "Pct Hisp", y="",x="")
+
+p5 <- ggplot(COVID.preds) +
+  geom_boxplot(aes(x=Cluster,y=YO.Ratio)) +
+  labs(title = "Young/Old Ratio", y="",x="")
+
+grid.arrange(p1,p2,p3,p4,p5, ncol=3)
+```
+
+\newpage
+
+# References

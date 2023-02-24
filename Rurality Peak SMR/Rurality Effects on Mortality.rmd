@@ -1,0 +1,484 @@
+---
+title: "Rurality & Mortality (1918 Flu & COVID in Missouri)"
+author: "Aaron Bogan"
+output: pdf_document
+header-includes:
+    - \usepackage[labelformat=empty]{caption}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,message=FALSE,warning=FALSE)
+library(ggplot2)
+library(dplyr)
+library(knitr)
+library(tidyr)
+library(broom)
+library(gridExtra)
+library(kableExtra)
+```
+
+# "1918 Flu" Mortality
+
+## Summary
+
+Weekly death counts attributed to the "1918 Flu" for 115 Missouri counties were recorded from the beginning of 1918 to the end of 1919. These weekly counts were standardized to account for county population differences ("standardized mortality ratio" or SMR). Two distinct 'peak' mortality time periods were visually identified. The first peak period ("wave 1") consists of 17 continuous weeks beginning in early September of 1918 and ending the final week of 1918. The second, ("wave 2") consists of 10 continuous weeks beginning the first week of 1920 to early March 1920.
+
+Each of the 115 counties was classified by rurality into one of three mutually exclusive groups: Rural, Semirural, or Urban. These classifications were determined by the research team investigators.
+
+Since the investigators were interested in comparing rurality's effect on 'peak' mortality, the maximum SMR for each county during each wave (1 and 2) was determined. A ratio of $\frac{Max \ SMR_{wave1}}{Max \ SMR_{wave2}}$ was used to test for differences between the two flu peak mortaltiy periods.
+
+-- $\color{red}{\textbf{There were no statistically significant differences in maximum SMR between the two "1918}}$ 
+$\color{red}{\textbf{Flu" waves.}}$ 
+
+Based on this finding, the two 'peak' periods were combined and the maximum SMR for each county across the two periods was determined.
+
+-- $\color{red}{\textbf{Across both flu waves, "Rural" counties experienced significantly LOWER peak "1918 Flu"}}$ 
+$\color{red}{\textbf{mortality on average than either "Semiurban" or "Urban" counties.}}$
+
+# COVID Mortality
+
+## Summary
+
+COVID cumulative daily death counts were downloaded on 08/03/21 from the web site "<https://usafacts.org/visualizations/coronavirus-covid-19-spread-map/state/missouri>" for each of the 115 Missouri counties. Death counts for each county were aggregated across 14-day periods. These bi-weekly death counts were standardized in a manner similar to the "1918 Flu" counts. Also similar to the 1918 analysis, a 'peak' mortality period was visually identified. This peak period consists of 39, 14-day periods from the end of August 2020 to mid-April 2021. Each county was classified by rurality (Rural, Semirural, Urban) by the investigators and maximum SMR was determined for each.
+
+-- $\color{red}{\textbf{"Rural" counties experienced significantly HIGHER peak COVID mortality on average than}}$
+$\color{red}{\textbf{either "Semiurban" or "Urban" counties.}}$
+
+\newpage
+
+# Discussion of Methods
+
+## "1918 Flu"
+
+### Comparison of Peak Waves (1918 and 1920)
+
+County level weekly death counts were standardized based on the following ratio:
+
+$$
+\begin{aligned}
+E & = \frac{County \ Population * Total \ Deaths}
+{ Number \ of \ Weeks * State \ Population} \\
+ \\
+SMR & = \frac{County \ Weekly \ Death \ Count}{E}
+\end{aligned}
+$$
+
+```{r}
+setwd("C:/Users/Arrun/Desktop/One Drive/OneDrive - University of Missouri/Researchin/COVID NSF project (Summer 21)/Summer 21 Summary/")
+
+## Load polygon shapefile (has the FIP index and I might use it for a later visualization##
+load("Mo.shape.rdata")
+
+### ### ### ### ### ## # ### ###
+####   Death Count Data     ####
+### ### ### ### ### ## # ### ###
+
+## Load the weekly death count data
+dth <- read.csv("Flu_2_peaks.csv")
+dth[,1] <- Mo.shape$COUNTYFP
+names(dth)[names(dth) == 'ï..FIP'] <- 'COUNTYFP'
+
+## total number of deaths over the 27 weeks
+dtot <- sum(dth[,-1])
+
+## var1910cl has county population totals
+load("var1910cl.rdata")
+
+### ### ### ### ### ### ### ### ### ###
+## E standardize across all 27 weeks ######
+### ### ### ### ### ### ### ### ### ###
+E_all <- as.data.frame(matrix(NA,nrow = 115,ncol = 27 ))
+## Calculate E for each county for each week
+for (i in 1:27){
+  E_all[,i] <- (var1910cl$TotalPop * dtot/(27*sum(var1910cl$TotalPop)))
+}
+
+### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ###
+####  SMR Data standardized ignoring time = "Flu.dat.all" #####
+### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ###
+Flu.dat.all <- dth[,-1]/E_all
+Flu.dat.all <- cbind(Mo.shape$COUNTYFP,Flu.dat.all)
+names(Flu.dat.all)[names(Flu.dat.all) == 'Mo.shape$COUNTYFP'] <- 'COUNTYFP'
+
+## Load 1918 Urban and Rural Classifications
+urb_rur <- t(as.data.frame(readxl::read_excel("Urb_Rur1918.xlsx", range = "B1:DL4", col_names = FALSE)))
+## insert Urban/Semi factor
+Flu.dat.all <- mutate(Flu.dat.all, Urban = urb_rur[,3], Semi = urb_rur[,4], Name = Mo.shape$NAME)
+
+## convert to long format
+Flu.dat.all <- gather(Flu.dat.all,key="date",
+                  value="SMR",-COUNTYFP,-Urban,-Semi, -Name) ##convert to long format
+## add formatted date, flu season (wave), and categorical population density column
+Flu.dat.all <- arrange(Flu.dat.all,COUNTYFP)
+Flu.dat.all$date <- rep(c(seq(from = as.Date("1918-09-08"), to = as.Date("1918-12-29"), by = 'week'),
+                          seq(from = as.Date("1920-01-04"), to = as.Date("1920-03-07"), by = 'week')), 115)
+Flu.dat.all <- mutate(Flu.dat.all, wave = ifelse(date < "1918-12-30", 'Wave01','Wave02'), 
+                      pop.cat = ifelse(Urban == "1", "Urban", ifelse(Semi == "1", "Semi", "Rural")))
+
+### Add death counts
+dth <- gather(dth,key="date",
+              value="deaths",-COUNTYFP) ##convert to long format
+Flu.dat.all$deaths <- dth$deaths
+
+## Record max SMR for each county in wave 1, wave 2, and overall "SMR.'wave'.max"
+## Across time ##
+SMR.ov.max.all <- Flu.dat.all %>% 
+  group_by(COUNTYFP) %>%
+  select(COUNTYFP, Name, pop.cat, SMR ) %>%
+  slice_max(SMR, n=1, with_ties = FALSE) 
+SMR.wave1.max.all <- Flu.dat.all %>% 
+  group_by(COUNTYFP) %>% 
+  filter(wave == "Wave01") %>%
+  select(COUNTYFP, Name, pop.cat, date, wave, SMR ) %>%
+  slice_max(SMR, n=1, with_ties = FALSE)
+SMR.wave2.max.all <- Flu.dat.all %>% 
+  group_by(COUNTYFP) %>% 
+  filter(wave == "Wave02") %>%
+  select(COUNTYFP, Name, pop.cat, date, wave, SMR ) %>%
+  slice_max(SMR, n=1, with_ties = FALSE)
+
+SMR.dat.all <- cbind(SMR.ov.max.all,SMR.wave1.max.all[,6],SMR.wave2.max.all[,6])
+colnames(SMR.dat.all) <- list("COUNTYFP", "Name", "Pop.Cat", "OverallMax", "Wave1.Max", "Wave2.Max")
+SMR.dat.all <- mutate(SMR.dat.all, log.OverallMax = log(OverallMax), log.Wave1.Max = log(Wave1.Max),
+                      log.Wave2.Max = log(Wave2.Max))
+```
+
+## 
+
+```{=tex}
+\begin{center}
+\large{Time Series of mean SMR}
+\end{center}
+```
+```{r, Time Series Plots}
+## ## ## ## ## ## ## ## ## ## ## ##
+###           wave 1           ###
+## ## ## ## ## ## ## ## ## ## ## ##
+## calculate weekly mean SMR for wave 1 for each population category
+w1rural.ts.all <- Flu.dat.all %>% 
+  filter(pop.cat == "Rural", wave == "Wave01") %>%
+  group_by(date) %>%
+  summarise(mean(SMR))
+w1semi.ts.all <- Flu.dat.all %>% 
+  filter(pop.cat == "Semi", wave == "Wave01") %>%
+  group_by(date) %>%
+  summarise(mean(SMR))  
+w1urban.ts.all <- Flu.dat.all %>% 
+  filter(pop.cat == "Urban", wave == "Wave01") %>%
+  group_by(date) %>%
+  summarise(mean(SMR))  
+## Stacked data frame
+w1ts.all <- rbind(w1rural.ts.all,w1semi.ts.all,w1urban.ts.all)  
+w1ts.all$pop.cat <- c(rep("rural",17),rep("semi",17),rep("urban",17))
+
+## ## ## ## ## ## ## ## ## ## ## ##
+##           wave 02           ##
+## ## ## ## ## ## ## ## ## ## ## ##
+## calculate weekly mean SMR for wave 2 for each population category
+w2rural.ts.all <- Flu.dat.all %>% 
+  filter(pop.cat == "Rural", wave == "Wave02") %>%
+  group_by(date) %>%
+  summarise(mean(SMR))
+w2semi.ts.all <- Flu.dat.all %>% 
+  filter(pop.cat == "Semi", wave == "Wave02") %>%
+  group_by(date) %>%
+  summarise(mean(SMR))  
+w2urban.ts.all <- Flu.dat.all %>% 
+  filter(pop.cat == "Urban", wave == "Wave02") %>%
+  group_by(date) %>%
+  summarise(mean(SMR))  
+## Stacked data frame
+w2ts.all <- rbind(w2rural.ts.all,w2semi.ts.all,w2urban.ts.all)  
+w2ts.all$pop.cat <- c(rep("rural",10),rep("semi",10),rep("urban",10))
+
+## Mean SMR plots for wave visual comparison
+w1 <- ggplot(w1ts.all) +
+  geom_line(aes(x = date, y = `mean(SMR)`, col = pop.cat)) +
+  ggtitle(label = "Mean SMR Wave 1 (1918)") +
+  coord_cartesian(ylim = c(0, 2.75)) + 
+  scale_color_discrete("Class")
+
+
+w2 <- ggplot(w2ts.all) +
+  geom_line(aes(x = date, y = `mean(SMR)`, col = pop.cat)) +
+  ggtitle(label = "Mean SMR Wave 2 (1920)") +
+  coord_cartesian(ylim = c(0, 2.75)) + 
+  scale_color_discrete("Class")
+
+grid.arrange(w1, w2, nrow = 2)
+
+```
+
+\newpage
+
+The response variable (maximum county SMR) was heavily skewed so a log transform was used to aid in model diagnostics and fitting.
+
+```{=tex}
+\begin{center}
+\large{Boxplots Visually Comparing Max SMR}
+\end{center}
+```
+```{r}
+## Max SMR Visualizations ####
+p1 <- ggplot(SMR.dat.all) +
+  geom_boxplot(aes(y=log.OverallMax, x= Pop.Cat)) +
+  xlab("") +
+  ylab("log(Max SMR Overall)") +
+  coord_cartesian(ylim = c(-0.5,2.75))
+
+p2 <- ggplot(SMR.dat.all) +
+  geom_boxplot(aes(y=log.Wave1.Max, x= Pop.Cat)) +
+  xlab("Rurality Class") +
+  ylab("log(Max SMR Wave 1)") +
+  coord_cartesian(ylim = c(-0.5,2.75))
+
+p3 <- ggplot(SMR.dat.all) +
+  geom_boxplot(aes(y=log.Wave2.Max, x= Pop.Cat)) +
+  xlab("") +
+  ylab("log(Max SMR Wave 2)") +
+  coord_cartesian(ylim = c(-0.5,2.75))
+
+grid.arrange(p1,p2,p3, nrow = 1)
+```
+
+\newpage
+
+Maximum SMR for each county during wave 1 (late 1918) was divided by the maximum SMR for that county during wave 2 (early 1920). 
+
+$$
+\frac{Max \ SMR_{wave1}}{Max \ SMR_{wave2}}
+$$
+
+Significant aerial spatial correlation was detected using a Moran's I test. A conditional autoregressive ("CAR") model was fit using a maximum likelihood method to detect any differences in mean SMR ratio across the three groups. No significant difference was detected.
+$\color{red}{\textbf{Peak SMR for the 1918 and 1920 flu}}$
+$\color{red}{\textbf{seasons is NOT significantly different.}}$
+
+
+```{=tex}
+\begin{center}
+\large{Boxplots Visually Comparing Max SMR Ratios}
+\end{center}
+```
+```{r}
+# create ratio response variable: max.SMR.wave1 / max.SMR.wave2
+SMR.dat <- SMR.wave1.max.all[,1:3]
+SMR.dat$ratio <- SMR.wave1.max.all$SMR/SMR.wave2.max.all$SMR
+SMR.dat$ln.ratio <- log(SMR.dat$ratio)
+
+ggplot(SMR.dat) +
+  geom_boxplot(aes(x = pop.cat,y = ln.ratio)) +
+  xlab("Rurality Class") +
+  ylab("log(SMR Ratio) {wave 1 / wave 2}")
+
+```
+
+### Rurality Mortality Comparisons
+
+Since the two "1918 Flu" waves are statistically similar, data from the two waves were combined. Again, aerial spatial correlation was detected using a Moran's I test. Two CAR models were fit using a Bayesian method as well as a maximum likelihood method. Both methods produced significant models indicating $\color{red}{\textbf{LOWER max SMR on average for "Rural" counties than "Semiurban" or "Urban" counties.}}$
+
+\newpage
+
+```{r}
+# library(spdep) # for adjacency matrix, lists, and Moran tests & other
+# ## spatial stuffs
+# ##  gotta load this package before joining the Mo.shape shapefile :-/
+# 
+# ## attach shapefile to the SMR data
+# SMR.ov.max.all$ln.SMR <- log(SMR.ov.max.all$SMR)
+# SMRfull <- full_join(Mo.shape, SMR.ov.max.all, by = "COUNTYFP")
+# ## Weighting/adjacency lists/matrices
+# W.nb <- poly2nb(Mo.shape, row.names = rownames(Mo.shape$FIP))
+# W.listNorm <- nb2listw(W.nb,style = "W") 
+# #creates a symmetric proximity matrix from the normalized neighbor list
+# ## for Bayesian CAR fit
+# W.listNorm.sym <- similar.listw(W.listNorm)
+# W.norm <- listw2mat(W.listNorm.sym)
+
+## Bayesian CAR Model
+# library(CARBayes)
+# BCAR <- S.CARleroux(formula = ln.SMR ~ pop.cat, family = "gaussian",
+#                     W = W.norm, burnin = 10000, n.sample = 100000, thin = 5, data = SMRfull)
+
+## ML CAR Model
+# library(spatialreg)
+# Car.1 <- spautolm(SMRfull$ln.SMR ~ pop.cat, data=SMRfull, W.listNorm.sym, family="CAR")
+# sum <- summary(Car.1)
+# cmlsum <- sum$Coef
+
+
+## Some package issues persist when loading everything at the top so I commented this stuff
+## out and simply saved the output from the Flu_ANOVA_Ver04.r file
+load(file = "bcar.rdata")
+```
+
+\begin{center}
+\large{Boxplots Visually Comparing "1918 Flu" Max SMR}
+\end{center}
+
+```{r}
+## Combined Season log(Max SMR) visual
+ggplot(SMRfull) +
+  geom_boxplot(aes(x=pop.cat, y=ln.SMR)) +
+  ylab("log(Max SMR)") +
+  xlab("Rurality Class")
+
+```
+
+##
+
+```{r}
+bcarsum <- BCAR$summary.results[1:3,1:3]
+rownames(bcarsum) <- c("Rural", "Sem - Rur", "Urb - Rur")
+kable(bcarsum, caption = "Bayesian CAR Model Summary", digits=c(2,2,2), 
+      format = "pipe", align = c("c", "c", "c")) %>% 
+  kable_styling(position = "center", latex_options = "HOLD_position")
+
+rownames(cmlsum) <- c("Rural", "Sem - Rur", "Urb - Rur")
+kable(cmlsum, caption = "ML CAR Model Summary", digits=c(2,3,2,3), 
+      format = "pipe", align = c("c", "c", "c", "c")) %>% 
+  kable_styling(position = "center", latex_options = "HOLD_position")      
+
+```
+
+\newpage
+
+## COVID
+
+### Rurality Mortality Comparisons
+
+COVID cumulative daily death counts were downloaded on 08/03/21 from the web site "<https://usafacts.org/visualizations/coronavirus-covid-19-spread-map/state/missouri>" for each of the 115 Missouri counties. Weekly count aggregation resulted in roughly 1.2% erroneous negative weekly counts. These erroneous counts were assumed to be due to recording/reporting lags that were corrected in subsequent weeks. To minimize the impact of these erroneous counts, a 14-day (bi-weekly) aggregation was chosen. This resulted in 0.4% negative bi-weekly counts. The bi-weekly death counts were standardized similarly to the "1918 Flu" counts. 
+
+$$
+\begin{aligned}
+E & = \frac{County \ Population * Total \ Deaths}
+{ Number \ of \ 14 \ day \ Periods * State \ Population} \\
+ \\
+SMR & = \frac{County \ 14 \ Day \ Death \ Count}{E}
+\end{aligned}
+$$
+
+Also similar to the 1918 analysis, a 'peak' mortality period was visually identified. This peak consists of 39, 14-day periods from the end of August 2020 to mid-April 2021. Each county was classified by rurality (Rural, Semirural, Urban) by the investigators.
+
+###
+
+\begin{center}
+\large{Time Series of mean SMR}
+\end{center}
+
+```{r}
+C.dth <- read.csv("covid_deaths_03AUG.csv")
+## 14 day aggregation (start date = 2/18/20)
+cts2 <- C.dth[,-(1:16)]
+cot2 <- as.data.frame(matrix(NA,ncol = 39,nrow = 115))
+cot2[,1] <- cts2[,14] - cts2[,1]
+for (i in 2:39){
+  cot2[,i] <- cts2[,14*i] - cts2[,14*(i-1)]
+}
+
+
+### ### ### ### ### ### ### ### ### ###
+## Single E to standardize across all 14 day time periods (39 of them) ######
+### ### ### ### ### ### ### ### ### ###
+## 9967 total COVID deaths ##
+dtot <- sum(cot2)
+## County data file (for population numbers)
+load(file = "var2020cl.rdata")
+## Initialize data frame to house the standardizations
+E <- as.data.frame(matrix(NA, nrow = 115, ncol = 39 ))
+## Calculate E for each county for each week
+for (i in 1:39){
+  E[,i] <- (var2020cl$TotalPop * dtot/(39*sum(var2020cl$TotalPop)))
+}
+
+cot2.SMR <- cot2/E
+
+## recombine aggregated counts with the originally loaded data frame
+## Keeping a counts data frame JIC
+Covid.counts <- cbind(C.dth[,1:3],cot2)
+Covid.counts$COUNTYFP <- substring(as.character(C.dth$countyFIPS),3)
+Covid.counts <- Covid.counts[,-1]
+## SMR data frame for analysis
+Covid.SMR <- cbind(C.dth[,1:3], cot2.SMR)
+Covid.SMR$COUNTYFP <- substring(as.character(C.dth$countyFIPS),3)
+Covid.SMR <- Covid.SMR[,-1]
+
+Covid.SMR <- gather(Covid.SMR,key="date",
+       value="SMR",-COUNTYFP, -County.Name, -pop.cat) ##convert to long format
+Covid.SMR <- Covid.SMR %>% arrange(COUNTYFP)
+Covid.SMR$date <- rep(seq(from = as.Date("2020-02-17"), 
+                              to = as.Date("2021-08-02"), by = '14 day'), 115)
+## Focus on the peak dates 1 Sep 2020 to ~15 Apr 2021
+Covid.SMR.pk <- Covid.SMR %>% filter(date >"2020-08-29" & date < "2021-04-16")
+
+### ### ### ### ### ### ### ### ### ###
+###  Visual Exploration ###############
+### ### ### ### ### ### ### ### ### ###
+## SMR Time Series visual
+rural.ts <- Covid.SMR.pk %>% 
+  filter(pop.cat == "Rural") %>%
+  group_by(date) %>%
+  summarise(mean(SMR))
+semi.ts <- Covid.SMR.pk %>% 
+  filter(pop.cat == "Semi") %>%
+  group_by(date) %>%
+  summarise(mean(SMR))
+urban.ts <- Covid.SMR.pk %>% 
+  filter(pop.cat == "Urban") %>%
+  group_by(date) %>%
+  summarise(mean(SMR))
+
+ts.all <- rbind(rural.ts,semi.ts,urban.ts)  
+ts.all$pop.cat <- c(rep("rural",17),rep("semi",17),rep("urban",17))
+
+library(ggplot2)
+ggplot(ts.all) +
+  geom_line(aes(x = date, y = `mean(SMR)`, col = pop.cat)) +
+  scale_color_discrete("Class")
+
+```
+
+\newpage
+
+Maximum SMR over the 39 bi-weekly periods was determined for each county. A log transformation was used to improve model diagnostics and fit.
+
+\begin{center}
+\large{Boxplots Visually Comparing COVID Max SMR}
+\end{center}
+
+```{r}
+## Analysis of Maximum SMR for each county ####
+## Record max SMR for each county 
+SMR.max <- Covid.SMR.pk %>% 
+  group_by(COUNTYFP) %>%
+  select(COUNTYFP, County.Name, pop.cat, SMR ) %>%
+  slice_max(SMR, n=1, with_ties = FALSE) 
+colnames(SMR.max) <- list("COUNTYFP", "Name", "pop.cat", "Max.SMR")
+SMR.max <- mutate(SMR.max, log.Max.SMR = log(Max.SMR))
+
+ggplot(SMR.max) +
+  geom_boxplot(aes(x = pop.cat, y = log(Max.SMR))) +
+  ylab("log(Max SMR)") +
+  xlab("Rurality Class")
+```
+
+```{r}
+load(file = "bcar2.rdata")
+```
+
+Aerial spatial correlation was detected in the response variable (max SMR) using a Moran's I test. Two CAR models were fit using a Bayesian method as well as a maximum likelihood method. Both methods produced significant models indicating a $\color{red}{\textbf{HIGHER max SMR on average for "Rural" counties than}}$ 
+$\color{red}{\textbf{"Semiurban" or "Urban" counties.}}$
+
+##
+
+```{r}
+bcarsum <- BCAR$summary.results[1:3,1:3]
+rownames(bcarsum) <- c("Rural", "Sem - Rur", "Urb - Rur")
+kable(bcarsum, caption = "Bayesian CAR Model Summary", digits=c(2,2,2), 
+      format = "pipe", align = c("c", "c", "c")) %>% 
+  kable_styling(position = "center", latex_options = "HOLD_position")
+
+rownames(cmlsum2) <- c("Rural", "Sem - Rur", "Urb - Rur")
+kable(cmlsum2, caption = "ML CAR Model Summary", digits=c(2,3,2,3), 
+      format = "pipe", align = c("c", "c", "c", "c")) %>% 
+  kable_styling(position = "center", latex_options = "HOLD_position")
+```
